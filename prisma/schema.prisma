@@ -1,0 +1,290 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  RESTAURANT_OWNER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY_FOR_PICKUP
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  firstName     String
+  lastName      String
+  phoneNumber   String?
+  role          UserRole  @default(CUSTOMER)
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  restaurants   Restaurant[]   @relation("OwnerRestaurants")
+  orders        Order[]
+  reservations  Reservation[]
+  reviews       Review[]
+  
+  @@index([email])
+  @@index([role])
+}
+
+model Restaurant {
+  id              String    @id @default(cuid())
+  name            String
+  description     String?
+  address         String
+  city            String
+  postalCode      String?
+  phoneNumber     String
+  email           String?
+  cuisineType     String
+  openingTime     String
+  closingTime     String
+  isActive        Boolean   @default(false)
+  isApproved      Boolean   @default(false)
+  logoUrl         String?
+  coverImageUrl   String?
+  deliveryRadius  Int?      // in kilometers
+  minOrderAmount  Decimal?  @db.Decimal(10,2)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Relations
+  ownerId         String
+  owner           User      @relation("OwnerRestaurants", fields: [ownerId], references: [id])
+  menuCategories  MenuCategory[]
+  menuItems       MenuItem[]
+  orders          Order[]
+  reservations    Reservation[]
+  reviews         Review[]
+  
+  @@index([ownerId])
+  @@index([city])
+  @@index([isActive, isApproved])
+}
+
+model MenuCategory {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  displayOrder Int     @default(0)
+  isActive    Boolean  @default(true)
+  
+  // Relations
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  menuItems    MenuItem[]
+  
+  @@unique([restaurantId, name])
+  @@index([restaurantId])
+}
+
+model MenuItem {
+  id           String    @id @default(cuid())
+  name         String
+  description  String?
+  price        Decimal   @db.Decimal(10,2)
+  discountedPrice Decimal? @db.Decimal(10,2)
+  isAvailable  Boolean   @default(true)
+  isVegetarian Boolean   @default(false)
+  isVegan      Boolean   @default(false)
+  hasGluten    Boolean   @default(true)
+  spicyLevel   Int?      @default(0) // 0-3
+  preparationTime Int?   // in minutes
+  imageUrl     String?
+  displayOrder Int       @default(0)
+  
+  // Relations
+  categoryId   String
+  category     MenuCategory @relation(fields: [categoryId], references: [id])
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  orderItems   OrderItem[]
+  
+  @@index([restaurantId])
+  @@index([categoryId])
+  @@index([isAvailable])
+}
+
+model Order {
+  id              String       @id @default(cuid())
+  orderNumber     String       @unique
+  status          OrderStatus  @default(PENDING)
+  totalAmount     Decimal      @db.Decimal(10,2)
+  taxAmount       Decimal      @db.Decimal(10,2)
+  deliveryFee     Decimal      @db.Decimal(10,2)
+  serviceCharge   Decimal      @db.Decimal(10,2) @default(0)
+  grandTotal      Decimal      @db.Decimal(10,2)
+  specialRequests String?
+  orderType       String       // "delivery", "pickup", "dine_in"
+  
+  // Delivery/Pickup info
+  deliveryAddress String?
+  customerPhone   String?
+  customerName    String?
+  scheduledTime   DateTime?
+  
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  
+  // Relations
+  userId          String
+  user            User         @relation(fields: [userId], references: [id])
+  restaurantId    String
+  restaurant      Restaurant   @relation(fields: [restaurantId], references: [id])
+  items           OrderItem[]
+  payment         Payment?
+  
+  @@index([userId])
+  @@index([restaurantId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  quantity    Int
+  unitPrice   Decimal  @db.Decimal(10,2)
+  totalPrice  Decimal  @db.Decimal(10,2)
+  specialInstructions String?
+  
+  // Relations
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id])
+  menuItemId  String
+  menuItem    MenuItem @relation(fields: [menuItemId], references: [id])
+  
+  @@index([orderId])
+}
+
+model Reservation {
+  id               String            @id @default(cuid())
+  reservationNumber String           @unique
+  customerName     String
+  customerEmail    String
+  customerPhone    String
+  reservationDate  DateTime
+  partySize        Int
+  specialRequests  String?
+  status           ReservationStatus @default(PENDING)
+  tableNumber      String?
+  durationMinutes  Int               @default(90)
+  
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  
+  // Relations
+  userId           String?
+  user             User?             @relation(fields: [userId], references: [id])
+  restaurantId     String
+  restaurant       Restaurant        @relation(fields: [restaurantId], references: [id])
+  
+  @@index([restaurantId])
+  @@index([reservationDate])
+  @@index([status])
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  transactionId   String        @unique
+  amount          Decimal       @db.Decimal(10,2)
+  status          PaymentStatus @default(PENDING)
+  paymentMethod   String        // "mpesa", "cash", "card"
+  mpesaReceipt    String?
+  mpesaPhoneNumber String?
+  
+  // M-Pesa specific
+  checkoutRequestID String?     @unique
+  merchantRequestID String?
+  resultCode       Int?
+  resultDesc       String?
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  // Relations
+  orderId         String        @unique
+  order           Order         @relation(fields: [orderId], references: [id])
+  
+  @@index([orderId])
+  @@index([status])
+}
+
+model Review {
+  id          String   @id @default(cuid())
+  rating      Int      // 1-5
+  comment     String?
+  isVerified  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  userId       String
+  user         User         @relation(fields: [userId], references: [id])
+  restaurantId String
+  restaurant   Restaurant   @relation(fields: [restaurantId], references: [id])
+  orderId      String?      @unique
+  order        Order?       @relation(fields: [orderId], references: [id])
+  
+  @@unique([userId, restaurantId])
+  @@index([restaurantId])
+  @@index([rating])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  message     String
+  type        String   // "order", "reservation", "system"
+  isRead      Boolean  @default(false)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model Conversation {
+  id          String   @id @default(cuid())
+  userId      String
+  restaurantId String?
+  messages    Json[]   // Store chat history
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([userId])
+}
